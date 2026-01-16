@@ -1,13 +1,12 @@
 // src/pages/SalesFinanceForm.tsx
 // Purpose:
 // - Render the Sales Finance form for a specific property, selected by :propertyCode in the URL.
-// - Load property details from Supabase and validate it's a SELL listing that is AVAILABLE.
+// - Load property + applicant context via Netlify Function (no browser -> Supabase access).
 // - Keep visual parity with the rental form (container, header, logo, App.css).
 // - Submission wired to Netlify function captureSalesFinance (uses full_name).
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useLocation /*, useNavigate */ } from "react-router-dom";
-import { supabase } from "../supabaseClient";
 import SalesFinanceSection from "../components/SalesFinanceSection";
 import { type SalesFinanceFormData } from "../types/salesForm";
 import "../App.css"; // reuse the exact styling as rental form
@@ -44,12 +43,6 @@ export default function SalesFinanceForm() {
 
   const location = useLocation();
 
-  // Optional: allow admin to pass ?applicant_id=... in the link.
-  // If not present, the backend will look up or create by email/phone.
-  const applicantId = useMemo(() => {
-    const p = new URLSearchParams(location.search);
-    return p.get("applicant_id");
-  }, [location.search]);
   // Read a signed prefill token from the URL (?token=...)
   const token = useMemo(() => {
     const p = new URLSearchParams(location.search);
@@ -70,78 +63,55 @@ export default function SalesFinanceForm() {
     return cfg ? `${cfg} ${addr || ""}`.trim() : addr || "";
   }, [property]);
 
-  // Load property by :propertyCode on mount/param change
+  // Load property + applicant context by :propertyCode (requires finance token OR booking token)
   useEffect(() => {
     let isActive = true;
-    async function fetchProperty() {
+    async function fetchContext() {
       setLoading(true);
       setLoadError(null);
       try {
-        const { data, error } = await supabase
-          .from("properties")
-          .select("*")
-          .eq("property_code", propertyCode)
-          .single();
-
-        if (!isActive) return;
-
-        if (error || !data) {
-          setLoadError("Nemovitost nenalezena.");
+        if (!propertyCode) {
+          setLoadError("Chybí kód nemovitosti.");
           setProperty(null);
-        } else {
-          // Business type check: accept 'sell' or localized 'prodej'
-          const bt = String(data.business_type || "").toLowerCase();
-          const isSales = bt === "sell" || bt === "prodej";
-          if (!isSales) {
-            setLoadError("Tato stránka je určena pouze pro prodejní nabídky.");
-            setProperty(null);
-          } else if (data.status !== "available") {
-            setLoadError(
-              "Děkujeme za Váš zájem, ale tato nemovitost již není k dispozici."
-            );
-            setProperty(null);
-          } else {
-            setProperty(data);
-          }
+          return;
         }
-      } finally {
-        if (isActive) setLoading(false);
-      }
-    }
-    fetchProperty();
-    return () => {
-      isActive = false;
-    };
-  }, [propertyCode]);
+        if (!token && !bookingToken) {
+          setLoadError("Odkaz je neplatný (chybí bezpečný token).");
+          setProperty(null);
+          return;
+        }
 
-  // If a signed token is present, fetch prefill data (name/email/phone) from the resolver
-  useEffect(() => {
-    let active = true;
+        const qs = new URLSearchParams();
+        qs.set("property_code", propertyCode);
+        if (token) qs.set("token", token);
+        if (bookingToken) qs.set("booking_token", bookingToken);
 
-    async function prefillFromToken() {
-      if (!token) return;
-
-      try {
         const res = await fetch(
-          `/.netlify/functions/resolveFinancePrefill?token=${encodeURIComponent(
-            token
-          )}`
+          `/.netlify/functions/resolveSalesFinanceContext?${qs.toString()}`
         );
         const txt = await res.text();
         let data: any = null;
         try {
           data = txt ? JSON.parse(txt) : null;
         } catch {
-          /* ignore parse error */
+          /* ignore */
         }
+
+        if (!isActive) return;
 
         if (!res.ok || !data?.ok) {
-          console.warn("Prefill resolver failed:", data?.error || txt);
+          setLoadError(
+            data?.error ||
+              txt ||
+              "Omlouváme se, nepodařilo se načíst údaje o nemovitosti."
+          );
+          setProperty(null);
           return;
         }
-        if (!active) return;
 
-        // Prefill the form with applicant details
+        setProperty(data.property);
+
+        // Prefill applicant details
         setFormData((prev) => ({
           ...prev,
           jmeno: data.applicant?.full_name || prev.jmeno,
@@ -149,16 +119,15 @@ export default function SalesFinanceForm() {
           telefon: data.applicant?.phone || prev.telefon,
         }));
         // Note: we intentionally do NOT auto-check GDPR
-      } catch (err: any) {
-        console.warn("Prefill resolver error:", err?.message || err);
+      } finally {
+        if (isActive) setLoading(false);
       }
     }
-
-    prefillFromToken();
+    fetchContext();
     return () => {
-      active = false;
+      isActive = false;
     };
-  }, [token]);
+  }, [propertyCode, token, bookingToken]);
 
   // Basic form change handler (keeps parity with rentals)
   function handleChange(
@@ -240,7 +209,6 @@ export default function SalesFinanceForm() {
     try {
       const payload = {
         property_code: property.property_code as string,
-        applicant_id: applicantId || undefined, // optional; backend will create/lookup if missing
 
         // ✅ Security: prove user came from a controlled link
         finance_token: token || undefined,
