@@ -56,6 +56,12 @@ export default function SalesFinanceForm() {
     return p.get("token");
   }, [location.search]);
 
+  // Optional: allow finance submit using a booking token (if user arrived from booking flow)
+  const bookingToken = useMemo(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get("booking_token");
+  }, [location.search]);
+
   // Friendly address label, falls back safely
   const addressLabel = useMemo(() => {
     if (!property) return "";
@@ -235,6 +241,10 @@ export default function SalesFinanceForm() {
       const payload = {
         property_code: property.property_code as string,
         applicant_id: applicantId || undefined, // optional; backend will create/lookup if missing
+
+        // ✅ Security: prove user came from a controlled link
+        finance_token: token || undefined,
+        booking_token: bookingToken || undefined,
 
         // ✅ single full name field (maps to applicants.full_name)
         full_name: formData.jmeno.trim(),

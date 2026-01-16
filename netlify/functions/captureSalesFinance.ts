@@ -39,14 +39,20 @@
 
 import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
+import jwt from "jsonwebtoken";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { bodyTooLarge, getClientIp } from "./utils/request";
 
-const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FINANCE_LINK_SECRET } =
+  process.env;
 
 type Body = {
   property_code?: string;
   applicant_id?: string | null;
+
+  // Security tokens (at least one required)
+  finance_token?: string | null; // JWT from admin link (?token=...)
+  booking_token?: string | null; // viewing_tokens.token (booking flow)
 
   // Single name field expected from UI
   full_name?: string;
@@ -124,6 +130,110 @@ export const handler: Handler = async (event) => {
       return json(400, { ok: false, error: "GDPR consent must be accepted" });
     }
 
+    // --- Security: require a valid finance JWT or booking token ---
+    const financeToken = String(body.finance_token ?? "").trim();
+    const bookingToken = String(body.booking_token ?? "").trim();
+    if (!financeToken && !bookingToken) {
+      return json(
+        401,
+        {
+          ok: false,
+          error: "Missing finance_token or booking_token",
+        },
+        rateLimitHeaders(rlIp)
+      );
+    }
+
+    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+
+    // Determine applicant_id + property_id from token (authoritative)
+    let verifiedApplicantId: string | null = null;
+    let verifiedPropertyId: string | null = null;
+
+    if (financeToken) {
+      if (!FINANCE_LINK_SECRET) {
+        return json(
+          500,
+          { ok: false, error: "Missing FINANCE_LINK_SECRET" },
+          rateLimitHeaders(rlIp)
+        );
+      }
+
+      let claims: any = null;
+      try {
+        claims = jwt.verify(financeToken, FINANCE_LINK_SECRET, {
+          algorithms: ["HS256"],
+        });
+      } catch {
+        return json(
+          401,
+          { ok: false, error: "Invalid or expired finance_token" },
+          rateLimitHeaders(rlIp)
+        );
+      }
+
+      if (claims?.purpose !== "finance_form_v1") {
+        return json(
+          401,
+          { ok: false, error: "Invalid finance_token purpose" },
+          rateLimitHeaders(rlIp)
+        );
+      }
+      if (!claims?.applicant_id || !claims?.property_id || !claims?.property_code) {
+        return json(
+          401,
+          { ok: false, error: "Incomplete finance_token" },
+          rateLimitHeaders(rlIp)
+        );
+      }
+      if (String(claims.property_code).trim() !== String(body.property_code).trim()) {
+        return json(
+          401,
+          { ok: false, error: "finance_token does not match property_code" },
+          rateLimitHeaders(rlIp)
+        );
+      }
+      verifiedApplicantId = String(claims.applicant_id);
+      verifiedPropertyId = String(claims.property_id);
+    } else if (bookingToken) {
+      if (bookingToken.length > 256) {
+        return json(400, { ok: false, error: "booking_token too long" }, rateLimitHeaders(rlIp));
+      }
+      const { data: vt, error: vtErr } = await supabase
+        .from("viewing_tokens")
+        .select("id, applicant_id, property_id")
+        .eq("token", bookingToken)
+        .maybeSingle();
+
+      if (vtErr || !vt?.applicant_id || !vt?.property_id) {
+        return json(
+          401,
+          { ok: false, error: "Invalid booking_token" },
+          rateLimitHeaders(rlIp)
+        );
+      }
+
+      // Ensure booking token points to the same property_code
+      const { data: propCheck, error: propCheckErr } = await supabase
+        .from("properties")
+        .select("id, property_code")
+        .eq("id", vt.property_id)
+        .single();
+      if (propCheckErr || !propCheck) {
+        return json(401, { ok: false, error: "Invalid booking_token (property missing)" }, rateLimitHeaders(rlIp));
+      }
+      if (String(propCheck.property_code).trim() !== String(body.property_code).trim()) {
+        return json(401, { ok: false, error: "booking_token does not match property_code" }, rateLimitHeaders(rlIp));
+      }
+
+      verifiedApplicantId = String(vt.applicant_id);
+      verifiedPropertyId = String(vt.property_id);
+    }
+
+    if (!verifiedApplicantId || !verifiedPropertyId) {
+      return json(500, { ok: false, error: "Failed to resolve applicant/property from token" }, rateLimitHeaders(rlIp));
+    }
+
     const own = numberOrNull(body.own_funds_pct);
     const mort = numberOrNull(body.mortgage_pct);
     if (own !== null && (own < 0 || own > 100)) {
@@ -145,13 +255,11 @@ export const handler: Handler = async (event) => {
       });
     }
 
-    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
-
-    // --- Resolve property ---
+    // --- Resolve property (authoritative id from token, still verify it's sales+available) ---
     const { data: property, error: propErr } = await supabase
       .from("properties")
       .select("id, property_code, business_type, status")
-      .eq("property_code", body.property_code)
+      .eq("id", verifiedPropertyId)
       .single();
 
     if (propErr || !property) {
@@ -169,109 +277,44 @@ export const handler: Handler = async (event) => {
 
     const property_id = property.id;
 
-    // --- Resolve or create applicant ---
-    const emailLc = String(body.email).trim().toLowerCase();
-    const phoneRaw = String(body.phone).trim();
-
-    let resolvedApplicantId = body.applicant_id ?? null;
-    let existingApplicant: {
-      id: string;
-      full_name: string | null;
-      email: string | null;
-      phone: string | null;
-      agreed_to_gdpr: boolean | null;
-    } | null = null;
-    let isNewApplicant = false;
-
-    if (!resolvedApplicantId) {
-      // Lookup by email (preferred)
-      const byEmail = await supabase
-        .from("applicants")
-        .select("id, full_name, email, phone, agreed_to_gdpr")
-        .ilike("email", emailLc) // case-insensitive
-        .maybeSingle();
-
-      if (!byEmail.error && byEmail.data) {
-        existingApplicant = byEmail.data;
-        resolvedApplicantId = byEmail.data.id;
-      } else if (!resolvedApplicantId && phoneRaw) {
-        // Lookup by phone if email not found
-        const byPhone = await supabase
-          .from("applicants")
-          .select("id, full_name, email, phone, agreed_to_gdpr")
-          .eq("phone", phoneRaw)
-          .maybeSingle();
-
-        if (!byPhone.error && byPhone.data) {
-          existingApplicant = byPhone.data;
-          resolvedApplicantId = byPhone.data.id;
-        }
-      }
+    // --- Applicant is determined by token (authoritative) ---
+    const resolvedApplicantId = verifiedApplicantId;
+    const { data: fetched, error: applErr } = await supabase
+      .from("applicants")
+      .select("id, full_name, email, phone, agreed_to_gdpr")
+      .eq("id", resolvedApplicantId)
+      .single();
+    if (applErr || !fetched) {
+      console.error("Fetch applicant error:", applErr?.message);
+      return json(404, { ok: false, error: "Applicant not found" }, rateLimitHeaders(rlIp));
     }
+    const existingApplicant = fetched;
+    const isNewApplicant = false;
 
-    if (!resolvedApplicantId) {
-      // Create new applicant
-      const { data: created, error: createErr } = await supabase
-        .from("applicants")
+    // --- Identity change detection ---
+    const identityChanged =
+      norm(existingApplicant.full_name) !== norm(fullName) ||
+      norm(existingApplicant.email) !== norm(body.email) ||
+      norm(existingApplicant.phone) !== norm(body.phone);
+
+    if (identityChanged) {
+      const { error: changeErr } = await supabase
+        .from("applicant_identity_changes")
         .insert({
-          full_name: fullName,
-          email: body.email,
-          phone: body.phone,
-          agreed_to_gdpr: true, // they checked GDPR
-        })
-        .select("id, full_name, email, phone, agreed_to_gdpr")
-        .single();
-
-      if (createErr || !created) {
-        console.error("Create applicant error:", createErr?.message);
-        return json(500, { ok: false, error: "Failed to create applicant" });
-      }
-      resolvedApplicantId = created.id;
-      existingApplicant = created;
-      isNewApplicant = true;
-    } else if (!existingApplicant) {
-      // If id was provided or found but we don't have full row yet, fetch it
-      const { data: fetched, error: applErr } = await supabase
-        .from("applicants")
-        .select("id, full_name, email, phone, agreed_to_gdpr")
-        .eq("id", resolvedApplicantId)
-        .single();
-      if (applErr || !fetched) {
-        console.error("Fetch applicant error:", applErr?.message);
-        return json(404, { ok: false, error: "Applicant not found" });
-      }
-      existingApplicant = fetched;
-    }
-
-    // --- Identity change detection (only if NOT newly created) ---
-    let identityChanged = false;
-    if (!isNewApplicant) {
-      identityChanged =
-        norm(existingApplicant.full_name) !== norm(fullName) ||
-        norm(existingApplicant.email) !== norm(body.email) ||
-        norm(existingApplicant.phone) !== norm(body.phone);
-
-      if (identityChanged) {
-        // NOTE: applicant_identity_changes has first/last columns in your earlier draft.
-        // We'll store the full name into *_first_name and keep *_last_name null to avoid schema churn.
-        const { error: changeErr } = await supabase
-          .from("applicant_identity_changes")
-          .insert({
-            applicant_id: resolvedApplicantId,
-            property_id,
-            changed_by: "buyer_form",
-            old_first_name: existingApplicant.full_name, // we put full name here
-            old_last_name: null,
-            old_email: existingApplicant.email,
-            old_phone: existingApplicant.phone,
-            new_first_name: fullName, // full name again
-            new_last_name: null,
-            new_email: body.email,
-            new_phone: body.phone,
-          });
-        if (changeErr) {
-          console.warn("Failed to write identity change:", changeErr.message);
-        }
+          applicant_id: resolvedApplicantId,
+          property_id,
+          changed_by: "buyer_form",
+          old_first_name: existingApplicant.full_name,
+          old_last_name: null,
+          old_email: existingApplicant.email,
+          old_phone: existingApplicant.phone,
+          new_first_name: fullName,
+          new_last_name: null,
+          new_email: body.email,
+          new_phone: body.phone,
+        });
+      if (changeErr) {
+        console.warn("Failed to write identity change:", changeErr.message);
       }
     }
 
