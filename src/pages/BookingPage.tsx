@@ -1,4 +1,4 @@
-// File: src/pages/BookingPage.tsx  (SALES variant using ?applicant=<ID>)
+// File: src/pages/BookingPage.tsx  (SALES booking using ?token=<TOKEN>)
 import "../App.css";
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -23,52 +23,57 @@ interface Slot {
 export default function BookingPage() {
   const { propertyCode } = useParams<{ propertyCode: string }>();
   const [searchParams] = useSearchParams();
-  const applicantId = (searchParams.get("applicant") || "").trim();
+  const token = (searchParams.get("token") || "").trim();
 
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [existingBooking, setExistingBooking] = useState<string | null>(null);
+  const [resolvedApplicantId, setResolvedApplicantId] = useState<string | null>(
+    null
+  );
+  const [resolvedPropertyId, setResolvedPropertyId] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     async function fetchSlots() {
-      if (!propertyCode || !applicantId) {
-        setMessage("❌ Chybí identifikace nemovitosti nebo žadatele.");
+      if (!propertyCode || !token) {
+        setMessage("❌ Chybí identifikace nemovitosti nebo bezpečný token.");
         setLoading(false);
         return;
       }
 
-      // Property
-      const { data: property, error: propError } = await supabase
-        .from("properties")
-        .select("id, business_type")
-        .eq("property_code", propertyCode)
-        .single();
-
-      if (propError || !property) {
-        setMessage("❌ Nemovitost nebyla nalezena.");
+      // Resolve token -> applicant_id + property_id (server-side)
+      const res = await fetch(
+        `/.netlify/functions/resolveBookingToken?token=${encodeURIComponent(
+          token
+        )}&property_code=${encodeURIComponent(propertyCode)}`
+      );
+      const txt = await res.text();
+      let resolved: any = null;
+      try {
+        resolved = txt ? JSON.parse(txt) : null;
+      } catch {
+        /* ignore */
+      }
+      if (!res.ok || !resolved?.ok || !resolved?.applicant_id || !resolved?.property_id) {
+        setMessage("❌ Neplatný nebo expirovaný odkaz k rezervaci.");
         setLoading(false);
         return;
       }
 
-      // (Optional) ensure Sales property
-      if (
-        property.business_type &&
-        !["prodej", "sale"].includes(
-          String(property.business_type).toLowerCase()
-        )
-      ) {
-        setMessage("❌ Tento odkaz neodpovídá prodeji nemovitosti.");
-        setLoading(false);
-        return;
-      }
+      const applicantId = String(resolved.applicant_id);
+      const propertyId = String(resolved.property_id);
+      setResolvedApplicantId(applicantId);
+      setResolvedPropertyId(propertyId);
 
       // Banner: read TEXT from sales_inquiries.viewing_time (mirrors Rentals approach)
       const { data: inquiry } = await supabase
         .from("sales_inquiries")
         .select("viewing_time")
         .eq("applicant_id", applicantId)
-        .eq("property_id", property.id)
+        .eq("property_id", propertyId)
         .maybeSingle();
 
       if (inquiry?.viewing_time) {
@@ -86,7 +91,7 @@ export default function BookingPage() {
       const { data, error } = await supabase
         .from("viewings")
         .select("id, slot_start, slot_end, status")
-        .eq("property_id", property.id)
+        .eq("property_id", propertyId)
         .eq("status", "available")
         .order("slot_start", { ascending: true });
 
@@ -100,11 +105,11 @@ export default function BookingPage() {
     }
 
     fetchSlots();
-  }, [propertyCode, applicantId]);
+  }, [propertyCode, token]);
 
   const handleBooking = async (slotId: string) => {
-    if (!applicantId) {
-      setMessage("❌ Chybí identifikace žadatele.");
+    if (!token || !resolvedApplicantId || !resolvedPropertyId) {
+      setMessage("❌ Chybí bezpečný token nebo kontext rezervace.");
       return;
     }
 
@@ -112,7 +117,7 @@ export default function BookingPage() {
       const res = await fetch("/.netlify/functions/bookSlot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotId, applicantId }),
+        body: JSON.stringify({ slotId, token }),
       });
 
       if (res.ok) {
