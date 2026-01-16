@@ -99,7 +99,13 @@ export default function BookingPage() {
         console.error(error);
         setMessage("❌ Chyba při načítání časů.");
       } else {
-        setSlots(data || []);
+        // Hide past slots (Europe/Prague) — same behavior as pronajem-maklerka
+        const nowPrague = dayjs().tz("Europe/Prague");
+        const nowMs = nowPrague.valueOf();
+        const filtered = (data || []).filter(
+          (s) => dayjs.tz(s.slot_start, "Europe/Prague").valueOf() >= nowMs
+        );
+        setSlots(filtered);
       }
       setLoading(false);
     }
