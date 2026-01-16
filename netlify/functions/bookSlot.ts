@@ -185,10 +185,45 @@ const handler: Handler = async (event) => {
   }
 
   try {
-    const { slotId, applicantId } = JSON.parse(event.body || "{}");
+    const { slotId, token } = JSON.parse(event.body || "{}") as {
+      slotId?: string;
+      token?: string;
+    };
 
-    if (!slotId || !applicantId) {
-      return { statusCode: 400, body: "Missing slotId or applicantId" };
+    if (!slotId || !token) {
+      return { statusCode: 400, body: "Missing slotId or token" };
+    }
+
+    // 0) Resolve booking token -> applicant_id + property_id (and validate sales+available)
+    const { data: vt, error: vtErr } = await supabase
+      .from("viewing_tokens")
+      .select("id, applicant_id, property_id, token, used")
+      .eq("token", String(token).trim())
+      .maybeSingle();
+
+    if (vtErr || !vt?.applicant_id || !vt?.property_id) {
+      return { statusCode: 401, body: "Invalid token" };
+    }
+
+    const applicantId = String(vt.applicant_id);
+    const tokenPropertyId = String(vt.property_id);
+
+    const { data: tokenProperty, error: tokenPropErr } = await supabase
+      .from("properties")
+      .select("id, business_type, status")
+      .eq("id", tokenPropertyId)
+      .single();
+
+    if (tokenPropErr || !tokenProperty) {
+      return { statusCode: 401, body: "Invalid token (property missing)" };
+    }
+
+    const bt = String(tokenProperty.business_type || "").toLowerCase();
+    if (!(bt === "sell" || bt === "prodej" || bt === "sale")) {
+      return { statusCode: 409, body: "Property is not a sales listing" };
+    }
+    if (String(tokenProperty.status || "") !== "available") {
+      return { statusCode: 409, body: "Property is not available" };
     }
 
     // 1) Get the slot (id, property)
@@ -203,6 +238,9 @@ const handler: Handler = async (event) => {
     }
 
     const { property_id } = slotData;
+    if (String(property_id) !== tokenPropertyId) {
+      return { statusCode: 401, body: "Token does not match this slot/property" };
+    }
 
     // 2) If the applicant already has a booking for this property, free it (same as Rentals: free one)
     const { data: existing } = await supabase
@@ -243,11 +281,29 @@ const handler: Handler = async (event) => {
     const newSlot = updatedSlots[0];
 
     // 4) Store the booked time on *sales_inquiries.viewing_time* (TEXT)
-    await supabase
-      .from("sales_inquiries")
-      .update({ viewing_time: newSlot.slot_start })
-      .eq("applicant_id", applicantId)
-      .eq("property_id", property_id);
+    {
+      const { data: existingInquiry } = await supabase
+        .from("sales_inquiries")
+        .select("id")
+        .eq("applicant_id", applicantId)
+        .eq("property_id", property_id)
+        .maybeSingle();
+
+      if (existingInquiry?.id) {
+        await supabase
+          .from("sales_inquiries")
+          .update({ viewing_time: newSlot.slot_start })
+          .eq("id", existingInquiry.id);
+      } else {
+        // Fallback: ensure there's a row to attach the viewing time to
+        await supabase.from("sales_inquiries").insert({
+          applicant_id: applicantId,
+          property_id,
+          viewing_time: newSlot.slot_start,
+          source: "booking_token",
+        } as any);
+      }
+    }
 
     // 5) Fetch applicant & property for the confirmation email
     const { data: applicant } = await supabase
