@@ -2,7 +2,6 @@
 import "../App.css";
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { supabase } from "../supabaseClient";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import timezone from "dayjs/plugin/timezone";
@@ -29,12 +28,6 @@ export default function BookingPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [existingBooking, setExistingBooking] = useState<string | null>(null);
-  const [resolvedApplicantId, setResolvedApplicantId] = useState<string | null>(
-    null
-  );
-  const [resolvedPropertyId, setResolvedPropertyId] = useState<string | null>(
-    null
-  );
 
   useEffect(() => {
     async function fetchSlots() {
@@ -44,40 +37,27 @@ export default function BookingPage() {
         return;
       }
 
-      // Resolve token -> applicant_id + property_id (server-side)
+      // Load booking context via Netlify function (no browser -> Supabase access)
       const res = await fetch(
-        `/.netlify/functions/resolveBookingToken?token=${encodeURIComponent(
+        `/.netlify/functions/getBookingPageData?token=${encodeURIComponent(
           token
         )}&property_code=${encodeURIComponent(propertyCode)}`
       );
       const txt = await res.text();
-      let resolved: any = null;
+      let data: any = null;
       try {
-        resolved = txt ? JSON.parse(txt) : null;
+        data = txt ? JSON.parse(txt) : null;
       } catch {
         /* ignore */
       }
-      if (!res.ok || !resolved?.ok || !resolved?.applicant_id || !resolved?.property_id) {
+      if (!res.ok || !data?.ok) {
         setMessage("❌ Neplatný nebo expirovaný odkaz k rezervaci.");
         setLoading(false);
         return;
       }
 
-      const applicantId = String(resolved.applicant_id);
-      const propertyId = String(resolved.property_id);
-      setResolvedApplicantId(applicantId);
-      setResolvedPropertyId(propertyId);
-
-      // Banner: read TEXT from sales_inquiries.viewing_time (mirrors Rentals approach)
-      const { data: inquiry } = await supabase
-        .from("sales_inquiries")
-        .select("viewing_time")
-        .eq("applicant_id", applicantId)
-        .eq("property_id", propertyId)
-        .maybeSingle();
-
-      if (inquiry?.viewing_time) {
-        const dt = dayjs(inquiry.viewing_time).tz("Europe/Prague");
+      if (data?.existing_viewing_time) {
+        const dt = dayjs(String(data.existing_viewing_time)).tz("Europe/Prague");
         setExistingBooking(
           `Máte rezervovaný termín prohlídky: ${dt.format(
             "DD/MM/YYYY"
@@ -87,26 +67,7 @@ export default function BookingPage() {
         );
       }
 
-      // Available slots (render in Prague)
-      const { data, error } = await supabase
-        .from("viewings")
-        .select("id, slot_start, slot_end, status")
-        .eq("property_id", propertyId)
-        .eq("status", "available")
-        .order("slot_start", { ascending: true });
-
-      if (error) {
-        console.error(error);
-        setMessage("❌ Chyba při načítání časů.");
-      } else {
-        // Hide past slots (Europe/Prague) — same behavior as pronajem-maklerka
-        const nowPrague = dayjs().tz("Europe/Prague");
-        const nowMs = nowPrague.valueOf();
-        const filtered = (data || []).filter(
-          (s) => dayjs.tz(s.slot_start, "Europe/Prague").valueOf() >= nowMs
-        );
-        setSlots(filtered);
-      }
+      setSlots((data.slots || []) as Slot[]);
       setLoading(false);
     }
 
@@ -114,8 +75,8 @@ export default function BookingPage() {
   }, [propertyCode, token]);
 
   const handleBooking = async (slotId: string) => {
-    if (!token || !resolvedApplicantId || !resolvedPropertyId) {
-      setMessage("❌ Chybí bezpečný token nebo kontext rezervace.");
+    if (!token) {
+      setMessage("❌ Chybí bezpečný token.");
       return;
     }
 
@@ -126,14 +87,19 @@ export default function BookingPage() {
         body: JSON.stringify({ slotId, token }),
       });
 
-      if (res.ok) {
+      const txt = await res.text();
+      let data: any = null;
+      try {
+        data = txt ? JSON.parse(txt) : null;
+      } catch {}
+
+      if (res.ok && data?.ok) {
         setMessage(
           "✅ Váš čas byl úspěšně rezervován! Brzy obdržíte potvrzovací e-mail."
         );
         setSlots((prev) => prev.filter((s) => s.id !== slotId));
       } else {
-        const text = await res.text();
-        setMessage("❌ Rezervace se nezdařila: " + text);
+        setMessage("❌ Rezervace se nezdařila: " + (data?.error || txt));
       }
     } catch (err) {
       console.error(err);
