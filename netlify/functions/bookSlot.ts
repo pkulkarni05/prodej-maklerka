@@ -3,6 +3,8 @@ import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
 import nodemailer from "nodemailer";
 import dayjs from "dayjs";
+import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
+import { bodyTooLarge, getClientIp } from "./utils/request";
 
 const {
   SUPABASE_URL,
@@ -185,13 +187,53 @@ const handler: Handler = async (event) => {
   }
 
   try {
+    if (bodyTooLarge(event, 10_000)) {
+      return json(413, { ok: false, error: "Request too large" });
+    }
+
     const { slotId, token } = JSON.parse(event.body || "{}") as {
       slotId?: string;
       token?: string;
     };
 
     if (!slotId || !token) {
-      return { statusCode: 400, body: "Missing slotId or token" };
+      return json(400, { ok: false, error: "Missing slotId or token" });
+    }
+    if (String(slotId).length > 64 || String(token).length > 256) {
+      return json(400, { ok: false, error: "Invalid input" });
+    }
+
+    // Basic rate limiting (best-effort)
+    const ip = getClientIp(event);
+    const rlIp = rateLimit({
+      key: `bookSlot:ip:${ip}`,
+      max: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+    if (!rlIp.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlIp),
+          "Retry-After": String(Math.ceil(rlIp.resetMs / 1000)),
+        }
+      );
+    }
+    const rlTok = rateLimit({
+      key: `bookSlot:tok:${String(token).trim()}`,
+      max: 10,
+      windowMs: 60 * 60 * 1000,
+    });
+    if (!rlTok.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlTok),
+          "Retry-After": String(Math.ceil(rlTok.resetMs / 1000)),
+        }
+      );
     }
 
     // 0) Resolve booking token -> applicant_id + property_id (and validate sales+available)
@@ -202,7 +244,7 @@ const handler: Handler = async (event) => {
       .maybeSingle();
 
     if (vtErr || !vt?.applicant_id || !vt?.property_id) {
-      return { statusCode: 401, body: "Invalid token" };
+      return json(401, { ok: false, error: "Invalid token" }, rateLimitHeaders(rlIp));
     }
 
     const applicantId = String(vt.applicant_id);
@@ -215,15 +257,15 @@ const handler: Handler = async (event) => {
       .single();
 
     if (tokenPropErr || !tokenProperty) {
-      return { statusCode: 401, body: "Invalid token (property missing)" };
+      return json(401, { ok: false, error: "Invalid token (property missing)" }, rateLimitHeaders(rlIp));
     }
 
     const bt = String(tokenProperty.business_type || "").toLowerCase();
     if (!(bt === "sell" || bt === "prodej" || bt === "sale")) {
-      return { statusCode: 409, body: "Property is not a sales listing" };
+      return json(409, { ok: false, error: "Property is not a sales listing" }, rateLimitHeaders(rlIp));
     }
     if (String(tokenProperty.status || "") !== "available") {
-      return { statusCode: 409, body: "Property is not available" };
+      return json(409, { ok: false, error: "Property is not available" }, rateLimitHeaders(rlIp));
     }
 
     // 1) Get the slot (id, property)
@@ -234,12 +276,12 @@ const handler: Handler = async (event) => {
       .single();
 
     if (slotError || !slotData) {
-      return { statusCode: 404, body: "Selected slot not found" };
+      return json(404, { ok: false, error: "Selected slot not found" }, rateLimitHeaders(rlIp));
     }
 
     const { property_id } = slotData;
     if (String(property_id) !== tokenPropertyId) {
-      return { statusCode: 401, body: "Token does not match this slot/property" };
+      return json(401, { ok: false, error: "Token does not match this slot/property" }, rateLimitHeaders(rlIp));
     }
 
     // 2) If the applicant already has a booking for this property, free it (same as Rentals: free one)
@@ -271,11 +313,11 @@ const handler: Handler = async (event) => {
 
     if (updateError) {
       console.error("Supabase error:", updateError);
-      return { statusCode: 500, body: "Database update failed" };
+      return json(500, { ok: false, error: "Database update failed" }, rateLimitHeaders(rlIp));
     }
 
     if (!updatedSlots || updatedSlots.length === 0) {
-      return { statusCode: 400, body: "Slot not available anymore" };
+      return json(400, { ok: false, error: "Slot not available anymore" }, rateLimitHeaders(rlIp));
     }
 
     const newSlot = updatedSlots[0];
@@ -424,11 +466,19 @@ const handler: Handler = async (event) => {
       }
     }
 
-    return { statusCode: 200, body: "Slot booked successfully" };
+    return json(200, { ok: true }, rateLimitHeaders(rlIp));
   } catch (err) {
     console.error("Booking error:", err);
-    return { statusCode: 500, body: "Internal server error" };
+    return json(500, { ok: false, error: "Internal server error" });
   }
 };
 
 export { handler };
+
+function json(status: number, body: any, extraHeaders: Record<string, string> = {}) {
+  return {
+    statusCode: status,
+    headers: { "Content-Type": "application/json", ...extraHeaders },
+    body: JSON.stringify(body),
+  };
+}

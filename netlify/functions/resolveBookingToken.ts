@@ -17,6 +17,8 @@
 
 import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
+import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
+import { getClientIp } from "./utils/request";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
@@ -37,6 +39,45 @@ export const handler: Handler = async (event) => {
     if (!token) return json(400, { ok: false, error: "Missing token" });
     if (!propertyCode)
       return json(400, { ok: false, error: "Missing property_code" });
+    if (token.length > 256) {
+      return json(400, { ok: false, error: "Token too long" });
+    }
+    if (propertyCode.length > 64) {
+      return json(400, { ok: false, error: "property_code too long" });
+    }
+
+    // Basic rate limiting (best-effort)
+    const ip = getClientIp(event);
+    const rlIp = rateLimit({
+      key: `resolveBookingToken:ip:${ip}`,
+      max: 120,
+      windowMs: 10 * 60 * 1000,
+    });
+    if (!rlIp.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlIp),
+          "Retry-After": String(Math.ceil(rlIp.resetMs / 1000)),
+        }
+      );
+    }
+    const rlTok = rateLimit({
+      key: `resolveBookingToken:tok:${token}`,
+      max: 60,
+      windowMs: 10 * 60 * 1000,
+    });
+    if (!rlTok.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlTok),
+          "Retry-After": String(Math.ceil(rlTok.resetMs / 1000)),
+        }
+      );
+    }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -47,7 +88,11 @@ export const handler: Handler = async (event) => {
       .maybeSingle();
 
     if (vtErr || !vt) {
-      return json(401, { ok: false, error: "Invalid token" });
+      return json(
+        401,
+        { ok: false, error: "Invalid token" },
+        { ...rateLimitHeaders(rlIp), "Cache-Control": "no-store" }
+      );
     }
 
     const { data: prop, error: propErr } = await supabase
@@ -81,17 +126,17 @@ export const handler: Handler = async (event) => {
       property_id: String(vt.property_id),
       property_code: propCodeDb,
       // NOTE: we intentionally do not return vt.token or any applicant PII here
-    });
+    }, { ...rateLimitHeaders(rlIp), "Cache-Control": "no-store" });
   } catch (e: any) {
     console.error("resolveBookingToken error:", e?.message || e);
     return json(500, { ok: false, error: "Internal server error" });
   }
 };
 
-function json(status: number, body: any) {
+function json(status: number, body: any, extraHeaders: Record<string, string> = {}) {
   return {
     statusCode: status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extraHeaders },
     body: JSON.stringify(body),
   };
 }
