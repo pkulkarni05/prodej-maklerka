@@ -39,6 +39,8 @@
 
 import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
+import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
+import { bodyTooLarge, getClientIp } from "./utils/request";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
@@ -74,6 +76,27 @@ export const handler: Handler = async (event) => {
     if (!event.body) {
       return json(400, { ok: false, error: "Missing request body" });
     }
+    if (bodyTooLarge(event, 50_000)) {
+      return json(413, { ok: false, error: "Request too large" });
+    }
+
+    // Basic rate limiting (best-effort)
+    const ip = getClientIp(event);
+    const rlIp = rateLimit({
+      key: `captureSalesFinance:ip:${ip}`,
+      max: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+    if (!rlIp.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlIp),
+          "Retry-After": String(Math.ceil(rlIp.resetMs / 1000)),
+        }
+      );
+    }
 
     const body: Body = JSON.parse(event.body);
 
@@ -81,12 +104,21 @@ export const handler: Handler = async (event) => {
     if (!body.property_code) {
       return json(400, { ok: false, error: "property_code is required" });
     }
+    if (String(body.property_code).length > 64) {
+      return json(400, { ok: false, error: "property_code too long" }, rateLimitHeaders(rlIp));
+    }
     const fullName = String(body.full_name ?? "").trim();
     if (!fullName) {
       return json(400, { ok: false, error: "full_name is required" });
     }
+    if (fullName.length > 200) {
+      return json(400, { ok: false, error: "full_name too long" }, rateLimitHeaders(rlIp));
+    }
     if (!body.email || !body.phone) {
       return json(400, { ok: false, error: "email and phone are required" });
+    }
+    if (String(body.email).length > 254 || String(body.phone).length > 40) {
+      return json(400, { ok: false, error: "Invalid email/phone" }, rateLimitHeaders(rlIp));
     }
     if (body.gdpr_consent !== true) {
       return json(400, { ok: false, error: "GDPR consent must be accepted" });
@@ -324,7 +356,7 @@ export const handler: Handler = async (event) => {
       sales_inquiry_id: salesInquiryId,
       identity_changed: identityChanged,
       created_new_applicant: isNewApplicant,
-    });
+    }, rateLimitHeaders(rlIp));
   } catch (e: any) {
     console.error("captureSalesFinance fatal error:", e?.message || e);
     return json(500, { ok: false, error: "Internal server error" });
@@ -332,10 +364,10 @@ export const handler: Handler = async (event) => {
 };
 
 // --- helpers ---
-function json(status: number, body: any) {
+function json(status: number, body: any, extraHeaders: Record<string, string> = {}) {
   return {
     statusCode: status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extraHeaders },
     body: JSON.stringify(body),
   };
 }

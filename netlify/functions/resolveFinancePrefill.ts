@@ -32,6 +32,8 @@
 import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
+import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
+import { getClientIp } from "./utils/request";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FINANCE_LINK_SECRET } =
   process.env;
@@ -61,6 +63,42 @@ export const handler: Handler = async (event) => {
     if (!token) {
       return json(400, { ok: false, error: "Missing token" });
     }
+    if (token.length > 4096) {
+      return json(400, { ok: false, error: "Token too long" });
+    }
+
+    // Basic rate limiting (best-effort)
+    const ip = getClientIp(event);
+    const rlIp = rateLimit({
+      key: `resolveFinancePrefill:ip:${ip}`,
+      max: 120,
+      windowMs: 10 * 60 * 1000,
+    });
+    if (!rlIp.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlIp),
+          "Retry-After": String(Math.ceil(rlIp.resetMs / 1000)),
+        }
+      );
+    }
+    const rlTok = rateLimit({
+      key: `resolveFinancePrefill:tok:${token.slice(0, 64)}`,
+      max: 60,
+      windowMs: 10 * 60 * 1000,
+    });
+    if (!rlTok.allowed) {
+      return json(
+        429,
+        { ok: false, error: "Rate limit exceeded" },
+        {
+          ...rateLimitHeaders(rlTok),
+          "Retry-After": String(Math.ceil(rlTok.resetMs / 1000)),
+        }
+      );
+    }
 
     // Verify signature + exp
     let claims: Claims;
@@ -69,7 +107,11 @@ export const handler: Handler = async (event) => {
         algorithms: ["HS256"],
       }) as Claims;
     } catch (e: any) {
-      return json(401, { ok: false, error: "Invalid or expired token" });
+      return json(
+        401,
+        { ok: false, error: "Invalid or expired token" },
+        { ...rateLimitHeaders(rlIp), "Cache-Control": "no-store" }
+      );
     }
 
     if (claims.purpose !== "finance_form_v1") {
@@ -129,17 +171,17 @@ export const handler: Handler = async (event) => {
         business_type: property.business_type,
         status: property.status,
       },
-    });
+    }, { ...rateLimitHeaders(rlIp), "Cache-Control": "no-store" });
   } catch (e: any) {
     console.error("resolveFinancePrefill error:", e?.message || e);
     return json(500, { ok: false, error: "Internal server error" });
   }
 };
 
-function json(status: number, body: any) {
+function json(status: number, body: any, extraHeaders: Record<string, string> = {}) {
   return {
     statusCode: status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extraHeaders },
     body: JSON.stringify(body),
   };
 }
