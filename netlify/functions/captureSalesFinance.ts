@@ -42,6 +42,7 @@ import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { bodyTooLarge, getClientIp } from "./utils/request";
+import { writeAuditEvent } from "./utils/audit";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FINANCE_LINK_SECRET } =
   process.env;
@@ -391,6 +392,18 @@ export const handler: Handler = async (event) => {
       }
       salesInquiryId = ins.id;
     }
+
+    void writeAuditEvent(event, {
+      event_type: "finance_submitted",
+      token_to_hash: (body.finance_token || body.booking_token || "").trim() || null,
+      applicant_id: resolvedApplicantId,
+      property_id,
+      meta: {
+        ok: true,
+        property_code: String(body.property_code),
+        sales_inquiry_id: salesInquiryId,
+      },
+    });
 
     return json(200, {
       ok: true,

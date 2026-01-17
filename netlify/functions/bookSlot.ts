@@ -5,6 +5,7 @@ import nodemailer from "nodemailer";
 import dayjs from "dayjs";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { bodyTooLarge, getClientIp } from "./utils/request";
+import { writeAuditEvent } from "./utils/audit";
 
 const {
   SUPABASE_URL,
@@ -244,6 +245,11 @@ const handler: Handler = async (event) => {
       .maybeSingle();
 
     if (vtErr || !vt?.applicant_id || !vt?.property_id) {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        meta: { ok: false, reason: "invalid_token", slot_id: slotId },
+      });
       return json(401, { ok: false, error: "Invalid token" }, rateLimitHeaders(rlIp));
     }
 
@@ -257,14 +263,38 @@ const handler: Handler = async (event) => {
       .single();
 
     if (tokenPropErr || !tokenProperty) {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "token_property_missing", slot_id: slotId },
+      });
       return json(401, { ok: false, error: "Invalid token (property missing)" }, rateLimitHeaders(rlIp));
     }
 
     const bt = String(tokenProperty.business_type || "").toLowerCase();
     if (!(bt === "sell" || bt === "prodej" || bt === "sale")) {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "not_sales", slot_id: slotId },
+      });
       return json(409, { ok: false, error: "Property is not a sales listing" }, rateLimitHeaders(rlIp));
     }
     if (String(tokenProperty.status || "") !== "available") {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "not_available", slot_id: slotId },
+      });
       return json(409, { ok: false, error: "Property is not available" }, rateLimitHeaders(rlIp));
     }
 
@@ -276,11 +306,27 @@ const handler: Handler = async (event) => {
       .single();
 
     if (slotError || !slotData) {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "slot_not_found", slot_id: slotId },
+      });
       return json(404, { ok: false, error: "Selected slot not found" }, rateLimitHeaders(rlIp));
     }
 
     const { property_id } = slotData;
     if (String(property_id) !== tokenPropertyId) {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "slot_cross_property", slot_id: slotId },
+      });
       return json(401, { ok: false, error: "Token does not match this slot/property" }, rateLimitHeaders(rlIp));
     }
 
@@ -313,14 +359,39 @@ const handler: Handler = async (event) => {
 
     if (updateError) {
       console.error("Supabase error:", updateError);
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "db_update_failed", slot_id: slotId },
+      });
       return json(500, { ok: false, error: "Database update failed" }, rateLimitHeaders(rlIp));
     }
 
     if (!updatedSlots || updatedSlots.length === 0) {
+      void writeAuditEvent(event, {
+        event_type: "booking_slot_booked",
+        token_to_hash: String(token).trim(),
+        viewing_token_id: String(vt.id),
+        applicant_id: applicantId,
+        property_id: tokenPropertyId,
+        meta: { ok: false, reason: "slot_not_available_anymore", slot_id: slotId },
+      });
       return json(400, { ok: false, error: "Slot not available anymore" }, rateLimitHeaders(rlIp));
     }
 
     const newSlot = updatedSlots[0];
+
+    void writeAuditEvent(event, {
+      event_type: "booking_slot_booked",
+      token_to_hash: String(token).trim(),
+      viewing_token_id: String(vt.id),
+      applicant_id: applicantId,
+      property_id: tokenPropertyId,
+      meta: { ok: true, slot_id: slotId, booked_slot_start: newSlot.slot_start },
+    });
 
     // 4) Store the booked time on *sales_inquiries.viewing_time* (TEXT)
     {

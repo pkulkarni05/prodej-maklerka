@@ -22,6 +22,7 @@ import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { getClientIp } from "./utils/request";
+import { writeAuditEvent } from "./utils/audit";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FINANCE_LINK_SECRET } =
   process.env;
@@ -94,6 +95,11 @@ export const handler: Handler = async (event) => {
           algorithms: ["HS256"],
         }) as Claims;
       } catch {
+        void writeAuditEvent(event, {
+          event_type: "finance_context_resolved",
+          token_to_hash: financeToken,
+          meta: { ok: false, reason: "invalid_finance_token", property_code: propertyCode },
+        });
         return json(401, { ok: false, error: "Invalid or expired token" });
       }
 
@@ -104,6 +110,11 @@ export const handler: Handler = async (event) => {
         return json(401, { ok: false, error: "Incomplete token" });
       }
       if (String(claims.property_code).trim() !== propertyCode) {
+        void writeAuditEvent(event, {
+          event_type: "finance_context_resolved",
+          token_to_hash: financeToken,
+          meta: { ok: false, reason: "property_mismatch", property_code: propertyCode },
+        });
         return json(401, { ok: false, error: "Token does not match property" });
       }
       applicantId = String(claims.applicant_id);
@@ -118,6 +129,11 @@ export const handler: Handler = async (event) => {
         .eq("token", bookingToken)
         .maybeSingle();
       if (vtErr || !vt?.applicant_id || !vt?.property_id) {
+        void writeAuditEvent(event, {
+          event_type: "finance_context_resolved",
+          token_to_hash: bookingToken,
+          meta: { ok: false, reason: "invalid_booking_token", property_code: propertyCode },
+        });
         return json(401, { ok: false, error: "Invalid booking_token" });
       }
       applicantId = String(vt.applicant_id);
@@ -150,12 +166,34 @@ export const handler: Handler = async (event) => {
 
     // Enforce property_code match + sales listing
     if (String(property.property_code || "").trim() !== propertyCode) {
+      void writeAuditEvent(event, {
+        event_type: "finance_context_resolved",
+        applicant_id: applicantId,
+        property_id: propertyId,
+        token_to_hash: financeToken || bookingToken,
+        meta: { ok: false, reason: "property_mismatch", property_code: propertyCode },
+      });
       return json(401, { ok: false, error: "Context does not match property" });
     }
     const bt = String(property.business_type || "").toLowerCase();
     if (!(bt === "sell" || bt === "prodej" || bt === "sale")) {
+      void writeAuditEvent(event, {
+        event_type: "finance_context_resolved",
+        applicant_id: applicantId,
+        property_id: propertyId,
+        token_to_hash: financeToken || bookingToken,
+        meta: { ok: false, reason: "not_sales", property_code: propertyCode },
+      });
       return json(409, { ok: false, error: "Property is not a sales listing" });
     }
+
+    void writeAuditEvent(event, {
+      event_type: "finance_context_resolved",
+      applicant_id: applicantId,
+      property_id: propertyId,
+      token_to_hash: financeToken || bookingToken,
+      meta: { ok: true, property_code: propertyCode },
+    });
 
     return json(
       200,

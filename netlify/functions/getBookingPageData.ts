@@ -20,6 +20,7 @@ import utc from "dayjs/plugin/utc";
 import timezone from "dayjs/plugin/timezone";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { getClientIp } from "./utils/request";
+import { writeAuditEvent } from "./utils/audit";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -87,10 +88,15 @@ export const handler: Handler = async (event) => {
     // Resolve token -> applicant_id + property_id
     const { data: vt, error: vtErr } = await sb
       .from("viewing_tokens")
-      .select("applicant_id, property_id")
+      .select("id, applicant_id, property_id")
       .eq("token", token)
       .maybeSingle();
     if (vtErr || !vt?.applicant_id || !vt?.property_id) {
+      void writeAuditEvent(event, {
+        event_type: "booking_page_loaded",
+        token_to_hash: token,
+        meta: { ok: false, reason: "invalid_token", property_code: propertyCode },
+      });
       return json(
         401,
         { ok: false, error: "Invalid token" },
@@ -108,13 +114,37 @@ export const handler: Handler = async (event) => {
       return json(401, { ok: false, error: "Invalid token (property missing)" });
     }
     if (String(prop.property_code || "").trim() !== propertyCode) {
+      void writeAuditEvent(event, {
+        event_type: "booking_page_loaded",
+        token_to_hash: token,
+        viewing_token_id: vt.id,
+        applicant_id: vt.applicant_id,
+        property_id: vt.property_id,
+        meta: { ok: false, reason: "property_mismatch", property_code: propertyCode },
+      });
       return json(401, { ok: false, error: "Token does not match property" });
     }
     const bt = String(prop.business_type || "").toLowerCase();
     if (!(bt === "sell" || bt === "prodej" || bt === "sale")) {
+      void writeAuditEvent(event, {
+        event_type: "booking_page_loaded",
+        token_to_hash: token,
+        viewing_token_id: vt.id,
+        applicant_id: vt.applicant_id,
+        property_id: vt.property_id,
+        meta: { ok: false, reason: "not_sales", property_code: propertyCode },
+      });
       return json(409, { ok: false, error: "Property is not a sales listing" });
     }
     if (String(prop.status || "") !== "available") {
+      void writeAuditEvent(event, {
+        event_type: "booking_page_loaded",
+        token_to_hash: token,
+        viewing_token_id: vt.id,
+        applicant_id: vt.applicant_id,
+        property_id: vt.property_id,
+        meta: { ok: false, reason: "not_available", property_code: propertyCode },
+      });
       return json(409, { ok: false, error: "Property is not available" });
     }
 
@@ -146,6 +176,15 @@ export const handler: Handler = async (event) => {
     const filtered = (slots || []).filter((s: any) => {
       const ms = dayjs.tz(s.slot_start, "Europe/Prague").valueOf();
       return ms >= nowMs;
+    });
+
+    void writeAuditEvent(event, {
+      event_type: "booking_page_loaded",
+      token_to_hash: token,
+      viewing_token_id: vt.id,
+      applicant_id: vt.applicant_id,
+      property_id: vt.property_id,
+      meta: { ok: true, property_code: propertyCode, slots_count: filtered.length },
     });
 
     return json(

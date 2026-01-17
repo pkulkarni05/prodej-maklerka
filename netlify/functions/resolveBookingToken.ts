@@ -19,6 +19,7 @@ import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { getClientIp } from "./utils/request";
+import { writeAuditEvent } from "./utils/audit";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
@@ -88,6 +89,11 @@ export const handler: Handler = async (event) => {
       .maybeSingle();
 
     if (vtErr || !vt) {
+      void writeAuditEvent(event, {
+        event_type: "booking_token_resolved",
+        token_to_hash: token,
+        meta: { ok: false, reason: "invalid_token", property_code: propertyCode },
+      });
       return json(
         401,
         { ok: false, error: "Invalid token" },
@@ -116,8 +122,25 @@ export const handler: Handler = async (event) => {
 
     const propCodeDb = String(prop.property_code || "").trim();
     if (propCodeDb !== propertyCode) {
+      void writeAuditEvent(event, {
+        event_type: "booking_token_resolved",
+        token_to_hash: token,
+        viewing_token_id: String(vt.id),
+        applicant_id: String(vt.applicant_id),
+        property_id: String(vt.property_id),
+        meta: { ok: false, reason: "property_mismatch", property_code: propertyCode },
+      });
       return json(401, { ok: false, error: "Token does not match property" });
     }
+
+    void writeAuditEvent(event, {
+      event_type: "booking_token_resolved",
+      token_to_hash: token,
+      viewing_token_id: String(vt.id),
+      applicant_id: String(vt.applicant_id),
+      property_id: String(vt.property_id),
+      meta: { ok: true, property_code: propCodeDb },
+    });
 
     return json(200, {
       ok: true,
