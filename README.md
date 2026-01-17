@@ -2,6 +2,23 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## prodej-maklerka setup (local / Netlify)
+
+### Frontend env vars (Vite)
+
+Create a local env file (recommended) using `env.example` as a template, or set these in Netlify UI:
+
+- **`VITE_SUPABASE_URL`**
+- **`VITE_SUPABASE_ANON_KEY`**
+
+> Note: the anon key is still “public” at runtime in the browser, but keeping it out of git makes rotation and accidental leakage much easier to manage.
+
+### Supabase audit table
+
+We store minimal audit events for buyer flows in a Supabase table. Create it once via SQL:
+
+- Run `supabase/audit_events.sql` in Supabase SQL Editor.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh

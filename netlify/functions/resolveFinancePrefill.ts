@@ -34,6 +34,7 @@ import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { getClientIp } from "./utils/request";
+import { writeAuditEvent } from "./utils/audit";
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FINANCE_LINK_SECRET } =
   process.env;
@@ -107,6 +108,11 @@ export const handler: Handler = async (event) => {
         algorithms: ["HS256"],
       }) as Claims;
     } catch (e: any) {
+      void writeAuditEvent(event, {
+        event_type: "finance_prefill_resolved",
+        token_to_hash: token,
+        meta: { ok: false, reason: "invalid_or_expired_token" },
+      });
       return json(
         401,
         { ok: false, error: "Invalid or expired token" },
@@ -153,6 +159,14 @@ export const handler: Handler = async (event) => {
     const expiresAtIso = claims.exp
       ? new Date(claims.exp * 1000).toISOString()
       : null;
+
+    void writeAuditEvent(event, {
+      event_type: "finance_prefill_resolved",
+      token_to_hash: token,
+      applicant_id: applicant.id,
+      property_id: property.id,
+      meta: { ok: true, expires_at: expiresAtIso },
+    });
 
     return json(200, {
       ok: true,
