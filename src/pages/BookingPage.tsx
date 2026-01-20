@@ -28,6 +28,7 @@ export default function BookingPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [existingBooking, setExistingBooking] = useState<string | null>(null);
+  const [bookingSlotId, setBookingSlotId] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchSlots() {
@@ -79,7 +80,10 @@ export default function BookingPage() {
       setMessage("❌ Chybí bezpečný token.");
       return;
     }
+    if (bookingSlotId) return; // prevent double-clicks / parallel requests
 
+    setBookingSlotId(slotId);
+    setMessage("⏳ Rezervuji termín, prosím vyčkejte…");
     try {
       const res = await fetch("/.netlify/functions/bookSlot", {
         method: "POST",
@@ -104,6 +108,8 @@ export default function BookingPage() {
     } catch (err) {
       console.error(err);
       setMessage("❌ Rezervační požadavek selhal.");
+    } finally {
+      setBookingSlotId(null);
     }
   };
 
@@ -168,15 +174,17 @@ export default function BookingPage() {
                   {dayjs.tz(slot.slot_start, "Europe/Prague").format("HH:mm")} –{" "}
                   {dayjs.tz(slot.slot_end, "Europe/Prague").format("HH:mm")}
                   <button
+                    disabled={!!bookingSlotId}
                     style={{
                       backgroundColor: "#0054a4",
                       marginLeft: "10px",
                       padding: "4px 8px",
-                      cursor: "pointer",
+                      cursor: bookingSlotId ? "not-allowed" : "pointer",
+                      opacity: bookingSlotId ? 0.7 : 1,
                     }}
                     onClick={() => handleBooking(slot.id)}
                   >
-                    Rezervovat
+                    {bookingSlotId === slot.id ? "Rezervuji…" : "Rezervovat"}
                   </button>
                 </li>
               ))}
