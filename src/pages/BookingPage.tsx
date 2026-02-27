@@ -137,14 +137,14 @@ export default function BookingPage() {
       >
         <h1>Rezervace prohlídky</h1>
         <img
-          src="/logo_pro.png"
+          src="/images/remax_logo_NEW.png"
           alt="Logo"
           style={{ height: "100px", objectFit: "contain" }}
         />
       </div>
 
       {message && (
-        <div style={{ marginBottom: "15px", color: "blue" }}>{message}</div>
+        <div style={{ marginBottom: "15px", color: "#0043ff" }}>{message}</div>
       )}
 
       {existingBooking && (
@@ -160,14 +160,14 @@ export default function BookingPage() {
           <div
             key={date}
             style={{
-              border: "2px solid #0054a4",
+              border: "2px solid #0043ff",
               borderRadius: "8px",
               padding: "10px",
               marginBottom: "20px",
               backgroundColor: "#f9f9f9",
             }}
           >
-            <h3 style={{ marginTop: 0, color: "#0054a4" }}>{date}</h3>
+            <h3 style={{ marginTop: 0, color: "#0043ff" }}>{date}</h3>
             <ul style={{ listStyle: "none", paddingLeft: 0 }}>
               {daySlots.map((slot) => (
                 <li key={slot.id} style={{ marginBottom: "10px" }}>
@@ -176,7 +176,7 @@ export default function BookingPage() {
                   <button
                     disabled={!!bookingSlotId}
                     style={{
-                      backgroundColor: "#0054a4",
+                      backgroundColor: "#0043ff",
                       marginLeft: "10px",
                       padding: "4px 8px",
                       cursor: bookingSlotId ? "not-allowed" : "pointer",

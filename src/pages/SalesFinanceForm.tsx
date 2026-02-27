@@ -332,12 +332,12 @@ export default function SalesFinanceForm() {
         >
           <div></div>
           <img
-            src="/logo_pro.png"
+            src="/images/remax_logo_NEW.png"
             alt="Logo"
             style={{ height: "100px", objectFit: "contain" }}
           />
         </div>
-        <h2 style={{ color: "#007BFF" }}>{loadError}</h2>
+        <h2 style={{ color: "#0043ff" }}>{loadError}</h2>
       </div>
     );
   }
@@ -355,7 +355,7 @@ export default function SalesFinanceForm() {
       >
         <div></div>
         <img
-          src="/remaxLogoBig.jpg"
+          src="/images/remax_logo_NEW.png"
           alt="Logo"
           style={{ height: "100px", objectFit: "contain" }}
         />

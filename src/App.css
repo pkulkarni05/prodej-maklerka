@@ -1,10 +1,10 @@
 body {
-  font-family: Arial, sans-serif;
+  font-family: 'Montserrat', system-ui, sans-serif;
   margin: 0;
   background: #ffffff;
   display: flex;
   justify-content: center;
-  align-items: flex-start; /* use center if you want vertical centering */
+  align-items: flex-start;
   min-height: 100vh;
   padding-top: 2rem;
 }
@@ -14,19 +14,19 @@ body {
   margin: 2rem auto;
   padding: 2rem;
   background: #ffffff;
-  border: 2px solid #0054a4; /* blue border */
+  border: 2px solid #0043ff; /* RE/MAX Primary Blue */
   border-radius: 8px;
-  box-shadow: 0 0 10px rgba(0, 84, 164, 0.2); /* subtle blue shadow */
+  box-shadow: 0 8px 32px rgba(0, 67, 255, 0.08);
 }
 
 h1 {
-  color: #e11b22; /* red */
+  color: #ff1200; /* RE/MAX Primary Red */
 }
 h2 {
-  color: #e11b22; /* red */
+  color: #ff1200; /* RE/MAX Primary Red */
 }
 legend {
-  background-color: #0054a4;
+  background-color: #0043ff; /* RE/MAX Primary Blue */
   color: white;
   padding: 0.5rem 1rem;
   border-radius: 4px;
@@ -52,21 +52,21 @@ select {
   border-radius: 4px;
   font-size: 1rem;
   background-color: #f9f9f9;
-  color: #000; /* ← ensure text is black */
-  font-family: Arial, sans-serif;
+  color: #000;
+  font-family: 'Montserrat', system-ui, sans-serif;
 }
 
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: #0054a4;
+  border-color: #0043ff; /* RE/MAX Primary Blue */
   outline: none;
   background-color: #ffffff;
-  color: #000; /* ← make sure focused input text is also black */
+  color: #000;
 }
 
 button {
-  background-color: #e11b22; /* red */
+  background-color: #ff1200; /* RE/MAX Primary Red */
   color: white;
   padding: 0.6rem 1.2rem;
   border: none;
@@ -78,7 +78,7 @@ button {
 }
 
 button:hover {
-  background-color: #c0101a; /* darker red on hover */
+  background-color: #e61000; /* darker red on hover */
 }
 
 .field-note {
@@ -87,11 +87,10 @@ button:hover {
   margin-top: 0.3rem;
   display: block;
 }
-/* ✅ Single clean GDPR style */
 .gdpr-line {
   display: flex;
   align-items: flex-start;
-  width: 70%; /* align with other input fields */
+  width: 70%;
   gap: 0.5rem;
 }
 
@@ -109,10 +108,9 @@ fieldset {
   margin-bottom: 2rem;
 }
 .required-star {
-  color: #e11b22;
+  color: #ff1200; /* RE/MAX Primary Red */
   margin-left: 0.2rem;
 }
-/* Generic table styles for all admin-style tables */
 
 .table-container {
   margin-top: 2rem;
@@ -142,25 +140,20 @@ fieldset {
 }
 
 .property-table tbody tr:hover {
-  background-color: #f0f8ff;
+  background-color: #e8efff;
   transition: 0.2s;
 }
 body {
-  color: #000; /* ensure default text is black */
-  color-scheme: light; /* prevent auto dark mode inversion */
+  color: #000;
+  color-scheme: light;
 }
-/* ===============================
-   FLEX LAYOUT (original outro-row)
-   =============================== */
 
-/* Two or three-column flex layout */
 .outro-row {
   display: flex !important;
-  align-items: stretch; /* makes photo match text height */
-  gap: 5rem; /* space between columns */
+  align-items: stretch;
+  gap: 5rem;
 }
 
-/* Responsive stacking on small screens */
 @media (max-width: 640px) {
   .outro-row {
     flex-direction: column;
@@ -169,17 +162,13 @@ body {
   }
 }
 
-/* ===============================
-   GRID LAYOUT (reusable outro-3col)
-   =============================== */
-
 .outro-3col {
   display: grid !important;
-  grid-template-columns: auto max-content auto; /* photo | text (fits content) | brand */
+  grid-template-columns: auto max-content auto;
   align-items: center;
-  column-gap: 1.25rem; /* a bit tighter */
+  column-gap: 1.25rem;
   margin-bottom: 1rem;
-  justify-content: start; /* keep tracks compact */
+  justify-content: start;
 }
 
 @media (max-width: 640px) {
@@ -190,46 +179,39 @@ body {
   }
 }
 
-/* ===============================
-   SHARED ELEMENT STYLES
-   =============================== */
-
-/* Agent photo */
 .agent-photo {
   width: 5.55em;
   height: 6.5em;
   object-fit: cover;
-  border-radius: 0; /* ✅ Square by default; change to 50% if you want rounded */
+  border-radius: 0;
 }
 
-/* Signature text */
 .outro-signature {
   text-align: left;
   line-height: 1.3;
 }
 
-/* Brand strip */
 .brand-strip {
   height: 6.5em;
   width: auto;
-  max-width: 360px; /* adjust or remove; prevents it getting too wide */
+  max-width: 360px;
   object-fit: contain;
-  display: block; /* avoids inline-gap */
+  display: block;
 }
 .form-footer-note {
   text-align: right;
-  font-size: 0.75rem; /* small & subtle */
-  color: green; /* light gray */
+  font-size: 0.75rem;
+  color: green;
   margin-top: 1.5rem;
   margin-right: 0.5rem;
   font-style: italic;
 }
 
 .form-footer-note a {
-  color: green; /* match text */
+  color: green;
   text-decoration: underline;
 }
 
 .form-footer-note a:hover {
-  color: darkgreen; /* slightly darker on hover */
+  color: darkgreen;
 }
