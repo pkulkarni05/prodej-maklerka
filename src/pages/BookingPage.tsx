@@ -163,13 +163,24 @@ export default function BookingPage() {
             <h3 style={{ marginTop: 0, color: "#0043ff" }}>{date}</h3>
             <ul style={{ listStyle: "none", paddingLeft: 0 }}>
               {daySlots.map((slot) => (
-                <li key={slot.id} style={{ marginBottom: "10px" }}>
-                  {dayjs.tz(slot.slot_start, "Europe/Prague").format("HH:mm")} –{" "}
-                  {dayjs.tz(slot.slot_end, "Europe/Prague").format("HH:mm")}
-                    <button
+                <li
+                  key={slot.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "10px",
+                    gap: "1rem",
+                  }}
+                >
+                  <span style={{ minWidth: "120px" }}>
+                    {dayjs.tz(slot.slot_start, "Europe/Prague").format("HH:mm")}{" "}
+                    – {dayjs.tz(slot.slot_end, "Europe/Prague").format("HH:mm")}
+                  </span>
+                  <button
                     disabled={!!bookingSlotId}
                     style={{
-                      marginLeft: "10px",
+                      flexShrink: 0,
                       padding: "4px 8px",
                       cursor: bookingSlotId ? "not-allowed" : "pointer",
                       opacity: bookingSlotId ? 0.7 : 1,
