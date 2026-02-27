@@ -6,11 +6,180 @@ import dayjs from "dayjs";
 import { rateLimit, rateLimitHeaders } from "./utils/rateLimit";
 import { bodyTooLarge, getClientIp } from "./utils/request";
 import { writeAuditEvent } from "./utils/audit";
+const {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  REMAX_USER,
+  REMAX_PASSWORD,
+  FINANCE_LINK_SERVICE_URL,
+  FINANCE_FORM_BASE_URL,
+  IMG_BASE,
+} = process.env;
 
 const supabase = createClient(
-  process.env.SUPABASE_URL as string,
-  process.env.SUPABASE_SERVICE_ROLE_KEY as string
+  SUPABASE_URL as string,
+  SUPABASE_SERVICE_ROLE_KEY as string
 );
+
+type PropertyEmailData = {
+  address: string | null;
+  property_configuration: string | null;
+  docs_link: string | null;
+  video_link: string | null;
+  advert_link: string | null;
+  map_link: string | null;
+};
+
+function escapeHtml(s: string) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+/**
+ * Branded HTML email for fixed-time viewing confirmation + finance link.
+ * Styling + footer follows sendViewingEmail.ts (composeHtmlViewingConfirmationEmail),
+ * with an extra CTA button for the finance form.
+ */
+function composeHtmlViewingConfirmationWithFinanceEmail(
+  p: PropertyEmailData,
+  viewingTime: string,
+  financeUrl: string | null
+) {
+  const address = escapeHtml(p.address || "");
+  const configuration = escapeHtml(p.property_configuration || "");
+  const map = p.map_link || "";
+
+  const addressFragment = map
+    ? `<a href="${map}" target="_blank" rel="noopener noreferrer" style="color:#1f497d;text-decoration:underline;font-weight:bold">${address}</a>`
+    : address;
+
+  // YOUR updated button style (inserted exactly as you want)
+  const btnStyle = `
+    display:inline-block;
+    background-color:#e60000;
+    color:#ffffff;
+    text-decoration:none;
+    font-weight:bold;
+    padding:14px 22px;
+    border-radius:8px;
+    font-family:Arial,Helvetica,sans-serif;
+    font-size:16px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.2);
+  `;
+
+  const base = IMG_BASE || "";
+  const photoUrl = base ? `${base}/jana.jpg` : "";
+  const brandUrl = base ? `${base}/BrandStrip-Small.jpeg` : "";
+
+  const financeBlock = financeUrl
+    ? `
+      <p style="color:#2e4057">
+        Vyplňte prosím krátký online dotazník, ve kterém mi můžete nezávazně sdělit, jaký způsob financování by pro Vás mohl být aktuální.
+      </p>
+      <div style="margin:12px 0">
+        <a href="${financeUrl}" target="_blank" rel="noopener noreferrer" style="${btnStyle}">
+          📝 Vyplnit online formulář
+        </a>
+      </div>
+      <p style="color:#2e4057">
+        Díky tomu Vám pak mohu:
+      </p>
+      <ul style="color:#2e4057;padding-left:20px;margin-top:4px;margin-bottom:12px">
+        <li>lépe přizpůsobit průběh celé transakce,</li>
+        <li>v případě potřeby nabídnout propojení na ověřeného finančního poradce,</li>
+        <li>nebo např. doladit termíny a další kroky přesně podle Vašich možností.</li>
+      </ul>
+      <p style="color:#2e4057">
+        Pokud už máte financování zajištěné nebo rozjednané, je to skvělé – i to mi v rámci koordinace celého procesu hodně pomůže.
+      </p>
+    `
+    : "";
+
+  const innerHtml = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.7;color:#2e4057">
+
+      <p style="color:#2e4057">Dobrý den,</p>
+
+      <p style="color:#2e4057">
+        děkuji za Váš zájem o prohlídku nemovitosti. Těším se na setkání s Vámi dne
+        <strong>${escapeHtml(
+          viewingTime
+        )}</strong>, na adrese ${addressFragment},
+        kdy si společně projdeme bydlení, které Vás zaujalo.
+      </p>
+
+      <p style="color:#2e4057">
+        Abych Vám mohla v případě zájmu poskytnout co nejefektivnější podporu a celý proces koupě probíhal co nejhladčeji,
+        dovolím si ještě malou prosbu.
+      </p>
+
+      ${financeBlock}
+
+      <p style="color:#2e4057">
+        Děkuji za spolupráci a kdyby cokoli, jsem Vám k dispozici.
+      </p>
+
+      <p style="color:#2e4057">Těším se na viděnou!</p>
+
+      <!-- SIGNATURE (unchanged) -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+            style="width:100%;max-width:640px;margin-top:12px;font-size:0;line-height:0">
+        <tr>
+          <td style="width:96px;vertical-align:top;padding:6px 8px 6px 0">
+            ${
+              photoUrl
+                ? `<img src="${photoUrl}" alt="Jana Bodáková" width="96"
+                  style="display:block;border:0;outline:none;border-radius:6px;max-width:100%;height:auto" />`
+                : ""
+            }
+          </td>
+          <td style="vertical-align:top;padding:6px 0;font-size:15px;line-height:1.6;color:#2e4057">
+            <div>
+              <strong style="color:#1f497d">Jana Bodáková</strong><br/>
+              Vaše realitní makléřka<br/>
+              M: +420&nbsp;736&nbsp;780&nbsp;983<br/>
+              E: <a href="mailto:jana.bodakova@re-max.cz" style="color:#1f497d;text-decoration:none">jana.bodakova@re-max.cz</a>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:8px 0 0 0;text-align:left">
+            ${
+              brandUrl
+                ? `<img src="${brandUrl}" alt="RE/MAX Brand" width="300"
+                  style="display:inline-block;border:0;outline:none;max-width:100%;height:auto"/>`
+                : ""
+            }
+          </td>
+        </tr>
+      </table>
+
+    </div>
+  `.trim();
+
+  return `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+        bgcolor="#1f497d" style="background-color:#1f497d;width:100%">
+    <tr>
+      <td align="center" valign="top" style="padding:6px;font-size:0;line-height:0">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+              bgcolor="#ffffff"
+              style="border-collapse:separate;width:100%;max-width:600px;background-color:#ffffff;border-spacing:0">
+          <tr>
+            <td style="padding:20px">
+              ${innerHtml}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+  `.trim();
+}
 
 const handler: Handler = async (event) => {
   if (event.httpMethod !== "POST") {
@@ -257,51 +426,111 @@ const handler: Handler = async (event) => {
 
     const { data: property } = await supabase
       .from("properties")
-      .select("property_configuration, address")
+      .select(
+        "property_configuration, address, property_code, docs_link, video_link, advert_link, map_link"
+      )
       .eq("id", property_id)
       .single();
 
-    // 6) Send email (same style as Rentals: use newSlot.slot_start directly)
+    // 6) Generate finance-form link via existing admin function (if configured)
+    let financeUrl: string | null = null;
+
+    if (
+      FINANCE_LINK_SERVICE_URL &&
+      FINANCE_FORM_BASE_URL &&
+      property?.property_code
+    ) {
+      try {
+        const res = await fetch(FINANCE_LINK_SERVICE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            applicant_id: applicantId,
+            property_code: property.property_code,
+            base_url: FINANCE_FORM_BASE_URL,
+            // optional: expires_in_days: 7,
+          }),
+        });
+
+        const txt = await res.text();
+        let data: any = null;
+        try {
+          data = txt ? JSON.parse(txt) : null;
+        } catch (e) {
+          console.error("bookSlot:createFinanceFormLink JSON parse error:", e);
+        }
+
+        if (!res.ok || !data?.ok || !data?.url) {
+          console.error(
+            "bookSlot:createFinanceFormLink failed:",
+            res.status,
+            txt
+          );
+        } else {
+          financeUrl = data.url as string;
+        }
+      } catch (e) {
+        console.error("bookSlot:createFinanceFormLink error:", e);
+      }
+    } else {
+      if (!FINANCE_LINK_SERVICE_URL || !FINANCE_FORM_BASE_URL) {
+        console.warn(
+          "Finance link envs missing – FINANCE_LINK_SERVICE_URL and/or FINANCE_FORM_BASE_URL are not set. Email will be sent without finance link."
+        );
+      }
+    }
+
+    // 7) Send email (branded, with optional finance CTA)
     if (applicant && property) {
       try {
-        const transporter = nodemailer.createTransport({
-          host: "mail.re-max.cz",
-          port: 587,
-          secure: false,
-          auth: {
-            user: process.env.REMAX_USER,
-            pass: process.env.REMAX_PASSWORD,
-          },
-        });
+        const smtpUser = (REMAX_USER || "").trim();
+        const smtpPass = (REMAX_PASSWORD || "").trim();
 
-        // Rentals formats directly from newSlot.slot_start
-        const subject = `Potvrzení rezervace: ${property.property_configuration} ${property.address}`;
-        const formattedTime = dayjs(newSlot.slot_start).format(
-          "DD/MM/YYYY HH:mm"
-        );
+        if (!smtpUser || !smtpPass) {
+          console.error(
+            "BOOK SLOT EMAIL ERROR: Missing SMTP credentials (REMAX_USER/REMAX_PASSWORD)."
+          );
+        } else {
+          const transporter = nodemailer.createTransport({
+            host: "mail.re-max.cz",
+            port: 587,
+            secure: false,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+          });
 
-        const htmlBody = `
-          <p>Dobrý den${
-            applicant.full_name ? ` ${escapeHtml(applicant.full_name)}` : ""
-          },</p>
-          <p>Potvrzuji rezervaci Vaší prohlídky:</p>
-          <ul>
-            <li><strong>Nemovitost:</strong> ${escapeHtml(
-              property.property_configuration
-            )} ${escapeHtml(property.address)}</li>
-            <li><strong>Datum a čas:</strong> ${formattedTime}</li>
-          </ul>
-          <p>Pokud by Vás do té doby napadly jakékoli otázky, neváhejte nás prosím kontaktovat.<br/>Těšíme se na Vás!</p>
-          <p>S pozdravem,<br/>Jana Bodáková, RE/MAX Pro</p>
-        `;
+          const formattedTime = dayjs(newSlot.slot_start).format(
+            "DD/MM/YYYY HH:mm"
+          );
 
-        await transporter.sendMail({
-          from: `"Jana Bodakova" <jana.bodakova@re-max.cz>`,
-          envelope: { from: process.env.REMAX_USER, to: applicant.email },
-          to: applicant.email,
-          subject,
-          html: htmlBody,
-        });
+          const propertyData: PropertyEmailData = {
+            address: property.address ?? null,
+            property_configuration: property.property_configuration ?? null,
+            docs_link: property.docs_link ?? null,
+            video_link: property.video_link ?? null,
+            advert_link: property.advert_link ?? null,
+            map_link: property.map_link ?? null,
+          };
+
+          const htmlBody = composeHtmlViewingConfirmationWithFinanceEmail(
+            propertyData,
+            formattedTime,
+            financeUrl
+          );
+
+          // Subject explicitly mentions finance form to distinguish from other auto-responses
+          const subject = "Potvrzení termínu prohlídky + malá prosba";
+
+          await transporter.sendMail({
+            from: `"Jana Bodáková" <${smtpUser}>`,
+            envelope: { from: smtpUser, to: applicant.email },
+            to: applicant.email,
+            subject,
+            html: htmlBody,
+          });
+        }
       } catch (mailErr) {
         console.error("Email sending failed:", mailErr);
       }
@@ -313,15 +542,6 @@ const handler: Handler = async (event) => {
     return json(500, { ok: false, error: "Internal server error" });
   }
 };
-
-function escapeHtml(s: string) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
 
 export { handler };
 

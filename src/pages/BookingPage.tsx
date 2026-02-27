@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import timezone from "dayjs/plugin/timezone";
-
+import KulkarniConsultingNote from "../components/KulkarniConsultingNote";
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.tz.setDefault("Europe/Prague");
@@ -28,6 +28,7 @@ export default function BookingPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [existingBooking, setExistingBooking] = useState<string | null>(null);
+  const [bookingSlotId, setBookingSlotId] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchSlots() {
@@ -79,7 +80,10 @@ export default function BookingPage() {
       setMessage("❌ Chybí bezpečný token.");
       return;
     }
+    if (bookingSlotId) return; // prevent double-clicks / parallel requests
 
+    setBookingSlotId(slotId);
+    setMessage("⏳ Rezervuji termín, prosím vyčkejte…");
     try {
       const res = await fetch("/.netlify/functions/bookSlot", {
         method: "POST",
@@ -104,6 +108,8 @@ export default function BookingPage() {
     } catch (err) {
       console.error(err);
       setMessage("❌ Rezervační požadavek selhal.");
+    } finally {
+      setBookingSlotId(null);
     }
   };
 
@@ -131,14 +137,14 @@ export default function BookingPage() {
       >
         <h1>Rezervace prohlídky</h1>
         <img
-          src="/logo_pro.png"
+          src="/images/remax_logo_NEW.png"
           alt="Logo"
           style={{ height: "100px", objectFit: "contain" }}
         />
       </div>
 
       {message && (
-        <div style={{ marginBottom: "15px", color: "blue" }}>{message}</div>
+        <div style={{ marginBottom: "15px", color: "#0043ff" }}>{message}</div>
       )}
 
       {existingBooking && (
@@ -154,29 +160,31 @@ export default function BookingPage() {
           <div
             key={date}
             style={{
-              border: "2px solid #0054a4",
+              border: "2px solid #0043ff",
               borderRadius: "8px",
               padding: "10px",
               marginBottom: "20px",
               backgroundColor: "#f9f9f9",
             }}
           >
-            <h3 style={{ marginTop: 0, color: "#0054a4" }}>{date}</h3>
+            <h3 style={{ marginTop: 0, color: "#0043ff" }}>{date}</h3>
             <ul style={{ listStyle: "none", paddingLeft: 0 }}>
               {daySlots.map((slot) => (
                 <li key={slot.id} style={{ marginBottom: "10px" }}>
                   {dayjs.tz(slot.slot_start, "Europe/Prague").format("HH:mm")} –{" "}
                   {dayjs.tz(slot.slot_end, "Europe/Prague").format("HH:mm")}
                   <button
+                    disabled={!!bookingSlotId}
                     style={{
-                      backgroundColor: "#0054a4",
+                      backgroundColor: "#0043ff",
                       marginLeft: "10px",
                       padding: "4px 8px",
-                      cursor: "pointer",
+                      cursor: bookingSlotId ? "not-allowed" : "pointer",
+                      opacity: bookingSlotId ? 0.7 : 1,
                     }}
                     onClick={() => handleBooking(slot.id)}
                   >
-                    Rezervovat
+                    {bookingSlotId === slot.id ? "Rezervuji…" : "Rezervovat"}
                   </button>
                 </li>
               ))}
@@ -184,6 +192,7 @@ export default function BookingPage() {
           </div>
         ))
       )}
+      <KulkarniConsultingNote />
     </div>
   );
 }
