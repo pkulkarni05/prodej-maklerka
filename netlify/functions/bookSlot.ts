@@ -13,6 +13,7 @@ const {
   REMAX_USER,
   REMAX_PASSWORD,
   FINANCE_LINK_SERVICE_URL,
+  FINANCE_LINK_SERVICE_SECRET,
   FINANCE_FORM_BASE_URL,
   IMG_BASE,
 } = process.env;
@@ -438,13 +439,17 @@ const handler: Handler = async (event) => {
 
     if (
       FINANCE_LINK_SERVICE_URL &&
+      FINANCE_LINK_SERVICE_SECRET &&
       FINANCE_FORM_BASE_URL &&
       property?.property_code
     ) {
       try {
         const res = await fetch(FINANCE_LINK_SERVICE_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Service-Secret": FINANCE_LINK_SERVICE_SECRET || "",
+          },
           body: JSON.stringify({
             applicant_id: applicantId,
             property_code: property.property_code,
@@ -474,9 +479,9 @@ const handler: Handler = async (event) => {
         console.error("bookSlot:createFinanceFormLink error:", e);
       }
     } else {
-      if (!FINANCE_LINK_SERVICE_URL || !FINANCE_FORM_BASE_URL) {
+      if (!FINANCE_LINK_SERVICE_URL || !FINANCE_LINK_SERVICE_SECRET || !FINANCE_FORM_BASE_URL) {
         console.warn(
-          "Finance link envs missing – FINANCE_LINK_SERVICE_URL and/or FINANCE_FORM_BASE_URL are not set. Email will be sent without finance link."
+          "Finance link envs missing – FINANCE_LINK_SERVICE_URL, FINANCE_LINK_SERVICE_SECRET and/or FINANCE_FORM_BASE_URL are not set. Email will be sent without finance link."
         );
       }
     }
