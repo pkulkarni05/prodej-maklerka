@@ -323,18 +323,11 @@ export default function SalesFinanceForm() {
   if (loadError) {
     return (
       <div className="container">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <div></div>
+        <div className="page-header">
           <img
             src="/images/remax_logo_NEW.png"
-            alt="Logo"
-            style={{ height: "100px", objectFit: "contain" }}
+            alt="REMAX"
+            className="remax-logo"
           />
         </div>
         <h2 style={{ color: "#0043ff" }}>{loadError}</h2>
@@ -345,19 +338,11 @@ export default function SalesFinanceForm() {
 
   return (
     <div className="container">
-      {/* Header/logo bar (identical to rentals) */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div></div>
+      <div className="page-header">
         <img
           src="/images/remax_logo_NEW.png"
-          alt="Logo"
-          style={{ height: "100px", objectFit: "contain" }}
+          alt="REMAX"
+          className="remax-logo"
         />
       </div>
 

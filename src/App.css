@@ -1,3 +1,19 @@
+/* REMAX logo - anchored top-left, aligned with content */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.remax-logo {
+  height: 48px;
+  width: auto;
+  flex-shrink: 0;
+  display: block;
+}
+
 body {
   font-family: 'Montserrat', system-ui, sans-serif;
   margin: 0;

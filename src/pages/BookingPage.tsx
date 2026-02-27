@@ -127,20 +127,13 @@ export default function BookingPage() {
 
   return (
     <div style={{ padding: "20px" }}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <h1>Rezervace prohlídky</h1>
+      <div className="page-header">
         <img
           src="/images/remax_logo_NEW.png"
-          alt="Logo"
-          style={{ height: "100px", objectFit: "contain" }}
+          alt="REMAX"
+          className="remax-logo"
         />
+        <h1 style={{ margin: 0 }}>Rezervace prohlídky</h1>
       </div>
 
       {message && (
@@ -173,10 +166,9 @@ export default function BookingPage() {
                 <li key={slot.id} style={{ marginBottom: "10px" }}>
                   {dayjs.tz(slot.slot_start, "Europe/Prague").format("HH:mm")} –{" "}
                   {dayjs.tz(slot.slot_end, "Europe/Prague").format("HH:mm")}
-                  <button
+                    <button
                     disabled={!!bookingSlotId}
                     style={{
-                      backgroundColor: "#0043ff",
                       marginLeft: "10px",
                       padding: "4px 8px",
                       cursor: bookingSlotId ? "not-allowed" : "pointer",
